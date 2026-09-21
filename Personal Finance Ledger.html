@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <style>
@@ -251,7 +252,7 @@
   <header>
     <div class="brand">
       <h1>Personal Finance Ledger</h1>
-      <p>Track income and spending, month by month</p>
+  
     </div>
     <div class="month-nav">
       <button id="prevM" title="Previous month">‹</button>
@@ -268,7 +269,7 @@
   </div>
 
   <div class="install-bar" id="installBar">
-    <span>Keep this ledger one tap away — install it on your phone or computer.</span>
+    <span>Install it on your phone or computer.</span>
     <button id="installBtn">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v13m0 0l-5-5m5 5l5-5"/><path d="M4 19h16"/></svg>
       Add to device
@@ -296,6 +297,10 @@
       <button id="expPdf">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/></svg>
         PDF
+      </button>
+      <button id="expYear">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="17" rx="1"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
+        Full year
       </button>
     </div>
   </div>
@@ -360,7 +365,7 @@
 
   </div>
 
-  <footer>Saved automatically inside this app — visible only to you</footer>
+  
 </div>
 
 <div id="report"></div>
@@ -377,6 +382,7 @@
   let currentType = "expense";
   let lastNetValue = 0;
 
+  function shortMonthLabel(mk){ const [y,m]=mk.split("-").map(Number); return MONTHS[m-1].slice(0,3)+"-"+y; }
   function monthKey(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"); }
   function todayISO(){ const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
   function fmt(n){ return (Math.round(n*100)/100).toLocaleString('en-US',{maximumFractionDigits:2}); }
@@ -385,18 +391,35 @@
 
   async function loadData(){
     try{
-      const res = await window.storage.get(STORE_KEY, false);
-      if(res && res.value){
-        const d = JSON.parse(res.value);
+      const raw = localStorage.getItem(STORE_KEY);
+      if(raw){
+        const d = JSON.parse(raw);
         if(!d.monthlyIncome) d.monthlyIncome = {};
         return d;
       }
-    }catch(e){ /* not found yet */ }
+    }catch(e){ /* storage unavailable or empty */ }
     return { transactions: [], archivedMonths: {}, monthlyIncome: {}, lastSeenMonth: monthKey(new Date()) };
   }
   async function saveData(){
-    try{ await window.storage.set(STORE_KEY, JSON.stringify(data), false); }
+    try{ localStorage.setItem(STORE_KEY, JSON.stringify(data)); }
     catch(e){ console.error("Could not save", e); }
+  }
+
+  // Offer a generated file to the viewer: the platform's own save dialog when
+  // available (inside the Claude app), a normal browser download otherwise
+  // (a plain tab, or this page installed standalone on the device).
+  async function saveFile(filename, blob){
+    try{
+      if(window.claude && typeof window.claude.use === "function"){
+        const downloads = await window.claude.use("downloads");
+        if(downloads){ await downloads.save({ filename, data: blob }); return; }
+      }
+    }catch(e){ /* fall through to a normal browser download */ }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
   }
 
   function txnsForMonth(mk){ return data.transactions.filter(t => t.date.startsWith(mk)); }
@@ -709,6 +732,188 @@
     stripe:{argb:'FFF3EFE1', rgb:[243,239,225]},
   };
 
+  // ---- Native Excel chart parts (OOXML injected into the ExcelJS package) ----
+  const CHART_NS = 'xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
+
+  function xesc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function sref(sheet, a1){ return xesc("'" + String(sheet).replace(/'/g,"''") + "'!" + a1); }
+  function solid(hex){ return '<a:solidFill><a:srgbClr val="'+hex+'"/></a:solidFill>'; }
+  function txPr(hex, size, bold){
+    return '<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="'+size+'" b="'+(bold?1:0)+'">'+solid(hex)+'<a:latin typeface="Calibri"/></a:defRPr></a:pPr><a:endParaRPr lang="en-US"/></a:p></c:txPr>';
+  }
+  function chartTitle(text, hex){
+    return '<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="1200" b="1">'+solid(hex)+'<a:latin typeface="Calibri"/></a:defRPr></a:pPr><a:r><a:rPr lang="en-US" sz="1200" b="1">'+solid(hex)+'</a:rPr><a:t>'+xesc(text)+'</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title><c:autoTitleDeleted val="0"/>';
+  }
+  function strRefX(f, cached){ return '<c:strRef><c:f>'+f+'</c:f>'+(cached?'<c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>'+xesc(cached)+'</c:v></c:pt></c:strCache>':'')+'</c:strRef>'; }
+  function catAxis(id, crossId, opts){
+    const o = opts||{};
+    return '<c:catAx><c:axId val="'+id+'"/><c:scaling><c:orientation val="minMax"/></c:scaling>'+
+      '<c:delete val="'+(o.hidden?1:0)+'"/><c:axPos val="b"/>'+
+      (o.title?'<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="1000" b="1">'+solid(o.color)+'</a:defRPr></a:pPr><a:r><a:rPr lang="en-US" sz="1000" b="1">'+solid(o.color)+'</a:rPr><a:t>'+xesc(o.title)+'</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title>':'')+
+      '<c:majorTickMark val="out"/><c:minorTickMark val="none"/><c:tickLblPos val="'+(o.hidden?'none':(o.lblLow?'low':'nextTo'))+'"/>'+
+      '<c:spPr><a:ln w="9525"><a:solidFill><a:srgbClr val="'+(o.line||'C6BEA3')+'"/></a:solidFill></a:ln></c:spPr>'+
+      txPr(o.color||'20241F', 900, false)+
+      '<c:crossAx val="'+crossId+'"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/><c:noMultiLvlLbl val="0"/></c:catAx>';
+  }
+  function valAxis(id, crossId, opts){
+    const o = opts||{};
+    return '<c:valAx><c:axId val="'+id+'"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/>'+
+      '<c:axPos val="'+(o.secondary?'r':'l')+'"/>'+
+      (o.grid?'<c:majorGridlines><c:spPr><a:ln w="9525"><a:solidFill><a:srgbClr val="'+(o.line||'DCD5BF')+'"/></a:solidFill></a:ln></c:spPr></c:majorGridlines>':'')+
+      (o.title?'<c:title><c:tx><c:rich><a:bodyPr rot="-5400000" vert="horz"/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="1000" b="1">'+solid(o.color)+'</a:defRPr></a:pPr><a:r><a:rPr lang="en-US" sz="1000" b="1">'+solid(o.color)+'</a:rPr><a:t>'+xesc(o.title)+'</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title>':'')+
+      '<c:numFmt formatCode="#,##0" sourceLinked="0"/><c:majorTickMark val="out"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/>'+
+      '<c:spPr><a:ln w="9525"><a:solidFill><a:srgbClr val="'+(o.line||'C6BEA3')+'"/></a:solidFill></a:ln></c:spPr>'+
+      txPr(o.color||'20241F', 900, false)+
+      '<c:crossAx val="'+crossId+'"/><c:crosses val="'+(o.secondary?'max':'autoZero')+'"/><c:crossBetween val="between"/></c:valAx>';
+  }
+
+  function cashFlowChartXml(sheet, opts){
+    const { titleText, catRange, incomeRange, expenseRange, cumRange, incomeHead, expenseHead, cumHead, incomeName, expenseName, cumName, ccy } = opts;
+    const INK='20241F', GREEN='1F6F54', RUST='A2402D', LINE='C6BEA3', GRID='E3DCC7';
+    const cat = '<c:cat>'+strRefX(sref(sheet, catRange))+'</c:cat>';
+    function barSer(idx, headRef, headName, valRange, color){
+      return '<c:ser><c:idx val="'+idx+'"/><c:order val="'+idx+'"/>'+
+        '<c:tx>'+strRefX(sref(sheet, headRef), headName)+'</c:tx>'+
+        '<c:spPr>'+solid(color)+'<a:ln><a:noFill/></a:ln></c:spPr>'+
+        cat+'<c:val><c:numRef><c:f>'+sref(sheet, valRange)+'</c:f></c:numRef></c:val></c:ser>';
+    }
+    const bars = '<c:barChart><c:barDir val="col"/><c:grouping val="stacked"/><c:varyColors val="0"/>'+
+      barSer(0, incomeHead, incomeName, incomeRange, GREEN)+
+      barSer(1, expenseHead, expenseName, expenseRange, RUST)+
+      '<c:gapWidth val="60"/><c:overlap val="100"/><c:axId val="111111111"/><c:axId val="222222222"/></c:barChart>';
+    const line = '<c:lineChart><c:grouping val="standard"/><c:varyColors val="0"/>'+
+      '<c:ser><c:idx val="2"/><c:order val="2"/><c:tx>'+strRefX(sref(sheet, cumHead), cumName)+'</c:tx>'+
+      '<c:spPr><a:ln w="28575" cap="rnd">'+solid(INK)+'<a:round/></a:ln></c:spPr>'+
+      '<c:marker><c:symbol val="diamond"/><c:size val="6"/><c:spPr>'+solid(INK)+'<a:ln w="9525">'+solid(INK)+'</a:ln></c:spPr></c:marker>'+
+      cat+'<c:val><c:numRef><c:f>'+sref(sheet, cumRange)+'</c:f></c:numRef></c:val><c:smooth val="0"/></c:ser>'+
+      '<c:marker val="1"/><c:axId val="333333333"/><c:axId val="444444444"/></c:lineChart>';
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+      '<c:chartSpace '+CHART_NS+'><c:date1904 val="0"/><c:lang val="en-US"/><c:roundedCorners val="0"/><c:chart>'+
+      chartTitle(titleText, INK)+
+      '<c:plotArea><c:layout/>'+bars+line+
+      catAxis('111111111','222222222',{title:'Month', color:INK, line:LINE, lblLow:true})+
+      valAxis('222222222','111111111',{title:'Monthly flow ', color:INK, line:LINE, grid:true})+
+      valAxis('444444444','333333333',{title:'Cumulative ', color:INK, line:LINE, secondary:true})+
+      catAxis('333333333','444444444',{hidden:true, color:INK, line:LINE})+
+      '<c:spPr>'+solid('FBF9F2')+'<a:ln><a:noFill/></a:ln></c:spPr></c:plotArea>'+
+      '<c:legend><c:legendPos val="b"/><c:overlay val="0"/>'+txPr(INK,900,false)+'</c:legend>'+
+      '<c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart>'+
+      '<c:spPr>'+solid('FBF9F2')+'<a:ln w="9525">'+solid(LINE)+'</a:ln></c:spPr></c:chartSpace>';
+  }
+
+  function categoryChartXml(sheet, opts){
+    const { titleText, catRange, valRange, headRef, headName, ccy } = opts;
+    const INK='20241F', RUST='A2402D', LINE='C6BEA3';
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+      '<c:chartSpace '+CHART_NS+'><c:date1904 val="0"/><c:lang val="en-US"/><c:roundedCorners val="0"/><c:chart>'+
+      chartTitle(titleText, INK)+
+      '<c:plotArea><c:layout/><c:barChart><c:barDir val="bar"/><c:grouping val="clustered"/><c:varyColors val="0"/>'+
+      '<c:ser><c:idx val="0"/><c:order val="0"/><c:tx>'+strRefX(sref(sheet, headRef), headName)+'</c:tx>'+
+      '<c:spPr>'+solid(RUST)+'<a:ln><a:noFill/></a:ln></c:spPr>'+
+      '<c:dLbls><c:numFmt formatCode="#,##0" sourceLinked="0"/><c:spPr><a:noFill/></c:spPr>'+txPr(INK,850,false)+
+      '<c:dLblPos val="outEnd"/><c:showLegendKey val="0"/><c:showVal val="1"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/><c:showBubbleSize val="0"/></c:dLbls>'+
+      '<c:cat>'+strRefX(sref(sheet, catRange))+'</c:cat>'+
+      '<c:val><c:numRef><c:f>'+sref(sheet, valRange)+'</c:f></c:numRef></c:val></c:ser>'+
+      '<c:gapWidth val="50"/><c:axId val="555555555"/><c:axId val="666666666"/></c:barChart>'+
+      '<c:catAx><c:axId val="555555555"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/>'+
+      '<c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/>'+
+      '<c:spPr><a:ln w="9525">'+solid(LINE)+'</a:ln></c:spPr>'+txPr(INK,900,false)+
+      '<c:crossAx val="666666666"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/><c:noMultiLvlLbl val="0"/></c:catAx>'+
+      valAxis('666666666','555555555',{title:'Spent ('+ccy+')', color:INK, line:LINE, grid:true})+
+      '<c:spPr>'+solid('FBF9F2')+'<a:ln><a:noFill/></a:ln></c:spPr></c:plotArea>'+
+      '<c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart>'+
+      '<c:spPr>'+solid('FBF9F2')+'<a:ln w="9525">'+solid(LINE)+'</a:ln></c:spPr></c:chartSpace>';
+  }
+
+  function drawingXml(anchor, relId){
+    const a = anchor;
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+      '<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'+
+      '<xdr:twoCellAnchor><xdr:from><xdr:col>'+a.fromCol+'</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>'+a.fromRow+'</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>'+
+      '<xdr:to><xdr:col>'+a.toCol+'</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>'+a.toRow+'</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>'+
+      '<xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="2" name="Chart 1"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>'+
+      '<xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm>'+
+      '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">'+
+      '<c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="'+relId+'"/>'+
+      '</a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:twoCellAnchor></xdr:wsDr>';
+  }
+
+  async function injectCharts(buffer, charts){
+    const zip = await JSZip.loadAsync(buffer);
+    const wbXml = await zip.file('xl/workbook.xml').async('string');
+    const relsXml = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+
+    const sheetMap = {};
+    wbXml.replace(/<sheet[^>]*\/>/g, (tag)=>{
+      const name = (tag.match(/name="([^"]*)"/)||[])[1];
+      const rid  = (tag.match(/r:id="([^"]*)"/)||[])[1];
+      if(name && rid) sheetMap[name.replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>')] = rid;
+      return tag;
+    });
+    const relMap = {};
+    relsXml.replace(/<Relationship[^>]*\/>/g, (tag)=>{
+      const id = (tag.match(/Id="([^"]*)"/)||[])[1];
+      const target = (tag.match(/Target="([^"]*)"/)||[])[1];
+      if(id && target) relMap[id] = target.replace(/^\//,'').replace(/^xl\//,'');
+      return tag;
+    });
+
+    let ctXml = await zip.file('[Content_Types].xml').async('string');
+    let added = 0;
+
+    for(const spec of charts){
+      const rid = sheetMap[spec.sheet];
+      if(!rid) continue;
+      const sheetPath = 'xl/' + relMap[rid];
+      const sheetFile = zip.file(sheetPath);
+      if(!sheetFile) continue;
+      added++;
+      const n = added;
+
+      zip.file('xl/charts/chart'+n+'.xml', spec.xml);
+      zip.file('xl/drawings/drawing'+n+'.xml', drawingXml(spec.anchor, 'rId1'));
+      zip.file('xl/drawings/_rels/drawing'+n+'.xml.rels',
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart'+n+'.xml"/></Relationships>');
+
+      const sheetRelPath = sheetPath.replace(/([^/]+)$/, '_rels/$1.rels');
+      let sheetRels = zip.file(sheetRelPath) ? await zip.file(sheetRelPath).async('string') : null;
+      let drawingRelId;
+      if(sheetRels){
+        const ids = (sheetRels.match(/Id="rId(\d+)"/g)||[]).map(s=>parseInt(s.replace(/\D/g,''),10));
+        drawingRelId = 'rId' + ((ids.length?Math.max.apply(null, ids):0) + 1);
+        sheetRels = sheetRels.replace('</Relationships>',
+          '<Relationship Id="'+drawingRelId+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing'+n+'.xml"/></Relationships>');
+      } else {
+        drawingRelId = 'rId1';
+        sheetRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+          '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
+          '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing'+n+'.xml"/></Relationships>';
+      }
+      zip.file(sheetRelPath, sheetRels);
+
+      let sheetXml = await sheetFile.async('string');
+      sheetXml = sheetXml.replace(/<drawing[^>]*\/>/g, '');
+      const drawTag = '<drawing r:id="'+drawingRelId+'"/>';
+      let at = -1;
+      ['<legacyDrawing', '<tableParts', '<extLst'].forEach(tag=>{
+        const i = sheetXml.indexOf(tag);
+        if(i !== -1 && (at === -1 || i < at)) at = i;
+      });
+      if(at === -1) at = sheetXml.lastIndexOf('</worksheet>');
+      sheetXml = sheetXml.slice(0, at) + drawTag + sheetXml.slice(at);
+      zip.file(sheetPath, sheetXml);
+
+      ctXml = ctXml.replace('</Types>',
+        '<Override PartName="/xl/charts/chart'+n+'.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>'+
+        '<Override PartName="/xl/drawings/drawing'+n+'.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/></Types>');
+    }
+
+    zip.file('[Content_Types].xml', ctXml);
+    return await zip.generateAsync({type:'arraybuffer', compression:'DEFLATE'});
+  }
+
   // ---- Export: Excel (styled workbook via ExcelJS) ----
   async function exportExcel(mk){
     const mt = monthTotals(mk);
@@ -723,7 +928,8 @@
     const wb = new ExcelJS.Workbook();
     wb.creator = "Personal Finance Ledger";
     wb.created = new Date();
-    const ws = wb.addWorksheet(monthLabelText(mk).replace(" ","-").slice(0,31), {
+    const sheetName = monthLabelText(mk).replace(" ","-").slice(0,31);
+    const ws = wb.addWorksheet(sheetName, {
       views: [{ state:'frozen', ySplit:4 }]
     });
     ws.columns = [{width:13},{width:11},{width:24},{width:15},{width:34}];
@@ -787,17 +993,57 @@
     summaryRow('Total spent', exp, PAL.rust.argb);
     summaryRow('Net', net, net>=0?PAL.green.argb:PAL.rust.argb);
 
+    // ---- Breakdown block + native bar chart ----
+    const tally = {};
+    list.forEach(t=>{ if(t.type!=='income'){ tally[t.category] = (tally[t.category]||0) + t.amount; } });
+    const bd = Object.keys(tally).map(k=>[k, tally[k]]).sort((a,b)=> b[1]-a[1]).slice(0,12);
+    let charts = [];
+    if(bd.length){
+      r += 2;
+      const bdHead = r;
+      ws.getCell(`A${r}`).value = 'Category';
+      ws.getCell(`B${r}`).value = `Spent (${CCY})`;
+      [`A${r}`,`B${r}`].forEach(addr=>{
+        const c = ws.getCell(addr);
+        c.font = {bold:true, color:{argb:PAL.paper.argb}};
+        c.fill = {type:'pattern', pattern:'solid', fgColor:{argb:PAL.ink.argb}};
+      });
+      ws.getRow(r).height = 20;
+      r++;
+      const bdStart = r;
+      bd.forEach(pair=>{
+        ws.getCell(`A${r}`).value = pair[0];
+        const v = ws.getCell(`B${r}`);
+        v.value = pair[1];
+        v.numFmt = '#,##0.00';
+        v.font = {bold:true, color:{argb:PAL.rust.argb}};
+        ws.getCell(`A${r}`).border = {bottom:{style:'hair', color:{argb:PAL.line.argb}}};
+        v.border = {bottom:{style:'hair', color:{argb:PAL.line.argb}}};
+        r++;
+      });
+      const bdEnd = r-1;
+      charts.push({
+        sheet: sheetName,
+        xml: categoryChartXml(sheetName, {
+          titleText: `Where the money went — ${monthLabelText(mk)}`,
+          catRange: `$A$${bdStart}:$A$${bdEnd}`,
+          valRange: `$B$${bdStart}:$B$${bdEnd}`,
+          headRef: `$B$${bdHead}`,
+          headName: `Spent (${CCY})`,
+          ccy: CCY
+        }),
+        anchor: {fromCol:5, fromRow:bdHead-1, toCol:13, toRow:bdHead+Math.max(14, bd.length*2+6)}
+      });
+    }
+
     const buf = await wb.xlsx.writeBuffer();
-    const blob = new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `ledger-${mk}.xlsx`;
-    document.body.appendChild(a); a.click(); a.remove();
-    URL.revokeObjectURL(url);
+    const bytes = charts.length ? await injectCharts(buf, charts) : buf;
+    const blob = new Blob([bytes], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    await saveFile(`ledger-${mk}.xlsx`, blob);
   }
 
   // ---- Export: PDF (vector report via jsPDF + autoTable) ----
-  function exportPdf(mk){
+  async function exportPdf(mk){
     const mt = monthTotals(mk);
     const list = mt.list.slice();
     if(mt.incomeVal > 0){
@@ -882,11 +1128,185 @@
       });
     }
 
-    doc.save(`ledger-${mk}.pdf`);
+    const blob = doc.output("blob");
+    await saveFile(`ledger-${mk}.pdf`, blob);
+  }
+
+  // ---- Export: full-year workbook (one sheet per month + a formula-linked Cash Flow overview) ----
+  async function exportAnnualExcel(year){
+    const wb = new ExcelJS.Workbook();
+    wb.creator = "Personal Finance Ledger";
+    wb.created = new Date();
+
+    const months = [];
+    for(let m=1;m<=12;m++){ months.push(year+"-"+String(m).padStart(2,"0")); }
+
+    const cashWs = wb.addWorksheet("Cash Flow", { views:[{state:'frozen', ySplit:4}] });
+    const refs = [];
+
+    months.forEach(mk=>{
+      const mt = monthTotals(mk);
+      const list = mt.list.slice();
+      if(mt.incomeVal > 0){
+        list.push({date: mk+"-01", type:"income", category:"Monthly income", amount: mt.incomeVal,
+          note: mt.inherited ? `carried from ${monthLabelText(mt.sourceMonth)}` : ""});
+      }
+      list.sort((a,b)=> a.date.localeCompare(b.date));
+
+      const label = shortMonthLabel(mk);
+      const ws = wb.addWorksheet(label, { views:[{state:'frozen', ySplit:4}] });
+      ws.columns = [{width:13},{width:11},{width:24},{width:15},{width:34}];
+
+      ws.mergeCells('A1:E1');
+      const title = ws.getCell('A1');
+      title.value = `Personal Finance Ledger — ${monthLabelText(mk)}`;
+      title.font = {bold:true, size:14, color:{argb:PAL.paper.argb}};
+      title.fill = {type:'pattern', pattern:'solid', fgColor:{argb:PAL.ink.argb}};
+      title.alignment = {vertical:'middle'};
+      ws.getRow(1).height = 26;
+
+      ws.mergeCells('A2:E2');
+      ws.getCell('A2').value = `Generated ${new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'})}  ·  ${list.length} transaction${list.length===1?'':'s'}`;
+      ws.getCell('A2').font = {italic:true, size:10, color:{argb:PAL.soft.argb}};
+      ws.getRow(2).height = 18;
+      ws.getRow(3).height = 6;
+
+      const head = ws.getRow(4);
+      head.values = ['Date','Type','Category',`Amount (${CCY})`,'Note'];
+      head.eachCell(c=>{
+        c.font = {bold:true, color:{argb:PAL.paper.argb}};
+        c.fill = {type:'pattern', pattern:'solid', fgColor:{argb:PAL.ink.argb}};
+      });
+      head.height = 20;
+      ws.autoFilter = { from:'A4', to:'E4' };
+
+      const dataStart = 5;
+      let r = dataStart;
+      if(list.length){
+        list.forEach((t,i)=>{
+          const row = ws.getRow(r);
+          row.values = [t.date, t.type==='income'?'Income':'Expense', t.category, t.amount, t.note||''];
+          row.getCell(4).numFmt = '#,##0.00';
+          const color = t.type==='income' ? PAL.green.argb : PAL.rust.argb;
+          row.getCell(2).font = {bold:true, color:{argb:color}};
+          row.getCell(4).font = {bold:true, color:{argb:color}};
+          if(i%2===1){ row.eachCell({includeEmpty:true}, c=>{ c.fill = {type:'pattern', pattern:'solid', fgColor:{argb:PAL.stripe.argb}}; }); }
+          row.eachCell({includeEmpty:true}, c=>{ c.border = {bottom:{style:'hair', color:{argb:PAL.line.argb}}}; });
+          r++;
+        });
+      } else { r++; } // reserve one blank row so SUMIF ranges stay valid
+      const dataEnd = r-1;
+      r++;
+
+      const incomeRow = r;
+      ws.mergeCells(`A${r}:C${r}`);
+      ws.getCell(`A${r}`).value = 'Total income'; ws.getCell(`A${r}`).font = {bold:true};
+      ws.getCell(`D${r}`).value = { formula: `SUMIF(B${dataStart}:B${dataEnd},"Income",D${dataStart}:D${dataEnd})`, result: mt.inc };
+      ws.getCell(`D${r}`).numFmt = '#,##0.00';
+      ws.getCell(`D${r}`).font = {bold:true, color:{argb:PAL.green.argb}};
+      r++;
+
+      const expenseRow = r;
+      ws.mergeCells(`A${r}:C${r}`);
+      ws.getCell(`A${r}`).value = 'Total spent'; ws.getCell(`A${r}`).font = {bold:true};
+      ws.getCell(`D${r}`).value = { formula: `SUMIF(B${dataStart}:B${dataEnd},"Expense",D${dataStart}:D${dataEnd})`, result: mt.exp };
+      ws.getCell(`D${r}`).numFmt = '#,##0.00';
+      ws.getCell(`D${r}`).font = {bold:true, color:{argb:PAL.rust.argb}};
+      r++;
+
+      ws.mergeCells(`A${r}:C${r}`);
+      ws.getCell(`A${r}`).value = 'Net'; ws.getCell(`A${r}`).font = {bold:true};
+      ws.getCell(`D${r}`).value = { formula: `D${incomeRow}-D${expenseRow}`, result: mt.net };
+      ws.getCell(`D${r}`).numFmt = '#,##0.00';
+      ws.getCell(`D${r}`).font = {bold:true};
+
+      refs.push({ label, incomeRef: `'${label}'!D${incomeRow}`, expenseRef: `'${label}'!D${expenseRow}`, inc: mt.inc, exp: mt.exp });
+    });
+
+    // ---- Cash Flow overview: every cell here is a formula linked to its month's sheet ----
+    cashWs.columns = [{width:12},{width:16},{width:16},{width:16},{width:20},{width:18}];
+    cashWs.mergeCells('A1:F1');
+    const cfTitle = cashWs.getCell('A1');
+    cfTitle.value = `Annual Cash Flow — ${year}`;
+    cfTitle.font = {bold:true, size:14, color:{argb:PAL.paper.argb}};
+    cfTitle.fill = {type:'pattern', pattern:'solid', fgColor:{argb:PAL.ink.argb}};
+    cfTitle.alignment = {vertical:'middle'};
+    cashWs.getRow(1).height = 26;
+
+    cashWs.mergeCells('A2:F2');
+    cashWs.getCell('A2').value = `Generated ${new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'})} · by HESHAM MOHAMED`;
+    cashWs.getCell('A2').font = {italic:true, size:10, color:{argb:PAL.soft.argb}};
+    cashWs.getRow(2).height = 18;
+    cashWs.getRow(3).height = 6;
+
+    const cfHead = cashWs.getRow(4);
+    cfHead.values = ['Month', `Income `, `Expenses `, `Net `, `Cumulative`, 'Expenses'];
+    cfHead.eachCell(c=>{
+      c.font = {bold:true, color:{argb:PAL.paper.argb}};
+      c.fill = {type:'pattern', pattern:'solid', fgColor:{argb:PAL.ink.argb}};
+    });
+    cfHead.height = 20;
+
+    let cr = 5;
+    let running = 0;
+    refs.forEach((ref, i)=>{
+      const row = cashWs.getRow(cr);
+      const net = ref.inc - ref.exp;
+      running += net;
+      row.getCell(1).value = ref.label;
+      row.getCell(2).value = { formula: ref.incomeRef, result: ref.inc };
+      row.getCell(3).value = { formula: ref.expenseRef, result: ref.exp };
+      row.getCell(4).value = { formula: `B${cr}-C${cr}`, result: net };
+      row.getCell(5).value = i===0 ? { formula: `D${cr}`, result: running } : { formula: `E${cr-1}+D${cr}`, result: running };
+      row.getCell(6).value = { formula: `-C${cr}`, result: -ref.exp };
+      [2,3,4,5,6].forEach(col=> row.getCell(col).numFmt = '#,##0.00');
+      row.getCell(4).font = {bold:true};
+      row.getCell(6).font = {color:{argb:PAL.soft.argb}};
+      if(i%2===1){ row.eachCell({includeEmpty:true}, c=>{ c.fill = {type:'pattern', pattern:'solid', fgColor:{argb:PAL.stripe.argb}}; }); }
+      row.eachCell({includeEmpty:true}, c=>{ c.border = {bottom:{style:'hair', color:{argb:PAL.line.argb}}}; });
+      cr++;
+    });
+
+    const lastDataRow = cr-1;
+    const totalInc = refs.reduce((s,x)=> s+x.inc, 0);
+    const totalExp = refs.reduce((s,x)=> s+x.exp, 0);
+    cr++;
+    cashWs.getCell(`A${cr}`).value = 'Year total'; cashWs.getCell(`A${cr}`).font = {bold:true};
+    cashWs.getCell(`B${cr}`).value = { formula: `SUM(B5:B${lastDataRow})`, result: totalInc };
+    cashWs.getCell(`C${cr}`).value = { formula: `SUM(C5:C${lastDataRow})`, result: totalExp };
+    cashWs.getCell(`D${cr}`).value = { formula: `SUM(D5:D${lastDataRow})`, result: totalInc-totalExp };
+    cashWs.getCell(`E${cr}`).value = { formula: `E${lastDataRow}`, result: running };
+    ['B','C','D','E'].forEach(col=>{
+      cashWs.getCell(`${col}${cr}`).numFmt = '#,##0.00';
+      cashWs.getCell(`${col}${cr}`).font = {bold:true};
+    });
+    cashWs.getRow(cr).eachCell({includeEmpty:true}, c=>{ c.border = {top:{style:'thin', color:{argb:PAL.ink.argb}}}; });
+    cashWs.autoFilter = { from:'A4', to:'E4' };
+
+    const cfChart = {
+      sheet: 'Cash Flow',
+      xml: cashFlowChartXml('Cash Flow', {
+        titleText: `Annual Cash Flow — ${year}`,
+        catRange: `$A$5:$A$${lastDataRow}`,
+        incomeRange: `$B$5:$B$${lastDataRow}`,
+        expenseRange: `$F$5:$F$${lastDataRow}`,
+        cumRange: `$E$5:$E$${lastDataRow}`,
+        incomeHead: '$B$4', expenseHead: '$C$4', cumHead: '$E$4',
+        incomeName: `Income `, expenseName: `Expenses `, cumName: `Cumulative `,
+        ccy: CCY
+      }),
+      anchor: {fromCol:0, fromRow:cr+2, toCol:9, toRow:cr+26}
+    };
+
+    const buf = await wb.xlsx.writeBuffer();
+    const bytes = await injectCharts(buf, [cfChart]);
+    const blob = new Blob([bytes], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    await saveFile(`ledger-${year}-annual.xlsx`, blob);
   }
 
   document.getElementById("expExcel").onclick = ()=> exportExcel(viewingMonth);
   document.getElementById("expPdf").onclick = ()=> exportPdf(viewingMonth);
+  document.getElementById("expYear").onclick = ()=> exportAnnualExcel(viewingMonth.split("-")[0]);
 
   // ---- Init ----
   (async function init(){
