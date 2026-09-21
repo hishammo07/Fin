@@ -1,0 +1,23 @@
+{
+  "name": "Personal Finance Ledger",
+  "short_name": "Finance",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#EAE5D6",
+  "theme_color": "#20241F",
+  "icons": [
+    {
+      "src": "data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='512' height='512'%3E%3Crect width='512' height='512' fill='%2320241F'/%3E%3Ctext x='50%25' y='56%25' font-family='Georgia,serif' font-size='230' fill='%23FBF9F2' text-anchor='middle' dominant-baseline='middle'%3EPF%3C/text%3E%3C/svg%3E",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='512' height='512'%3E%3Crect width='512' height='512' fill='%2320241F'/%3E%3Ctext x='50%25' y='56%25' font-family='Georgia,serif' font-size='230' fill='%23FBF9F2' text-anchor='middle' dominant-baseline='middle'%3EPF%3C/text%3E%3C/svg%3E",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

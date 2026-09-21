@@ -7,8 +7,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#20241F">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
@@ -644,12 +642,34 @@
 
   // ---- Install on device (native prompt where supported, guided steps elsewhere) ----
   function setupManifest(){
-    // manifest.json is linked statically in <head>. A real service worker
-    // file (not a blob) is what most browsers require before they'll offer
-    // the native install prompt — register it if this page is actually
-    // being served (http/https), not opened as a local file.
-    if('serviceWorker' in navigator && (location.protocol === 'https:' || location.protocol === 'http:')){
-      navigator.serviceWorker.register('sw.js').catch(()=>{});
+    const icon = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512">'+
+      '<rect width="512" height="512" fill="#20241F"/>'+
+      '<text x="50%" y="56%" font-family="Georgia,serif" font-size="230" fill="#FBF9F2" text-anchor="middle" dominant-baseline="middle">PF</text>'+
+      '</svg>'
+    );
+    const manifest = {
+      name: "Personal Finance Ledger",
+      short_name: "Finance",
+      start_url: location.href.split('#')[0].split('?')[0],
+      display: "standalone",
+      background_color: "#EAE5D6",
+      theme_color: "#20241F",
+      icons: [{ src: icon, sizes: "512x512", type: "image/svg+xml", purpose: "any" }]
+    };
+    const blob = new Blob([JSON.stringify(manifest)], {type:'application/manifest+json'});
+    const link = document.createElement('link');
+    link.rel = 'manifest';
+    link.href = URL.createObjectURL(blob);
+    document.head.appendChild(link);
+    // Best-effort: some browsers only offer the native install prompt with an
+    // active service worker. Registration is expected to silently fail in
+    // sandboxed contexts — the guided fallback below always works regardless.
+    if('serviceWorker' in navigator){
+      try{
+        const swUrl = URL.createObjectURL(new Blob(["self.addEventListener('fetch',function(){});"], {type:'text/javascript'}));
+        navigator.serviceWorker.register(swUrl).catch(()=>{});
+      }catch(e){}
     }
   }
 
