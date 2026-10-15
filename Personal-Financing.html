@@ -26,8 +26,21 @@
     --hero:#252A23;--hero-ink:#EEEBDD;--shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.25);}
 }
 *{box-sizing:border-box;}
+.cum-bar{position:fixed;left:0;right:0;bottom:0;z-index:50;background:var(--hero);color:var(--hero-ink);border-top:1px solid rgba(255,255,255,.14);box-shadow:0 -6px 24px rgba(0,0,0,.18);padding:10px 16px calc(10px + env(safe-area-inset-bottom,0px));}
+.cum-in{max-width:760px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;}
+.cum-main{display:flex;flex-direction:column;min-width:0;}
+.cum-lbl{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;opacity:.7;}
+.cum-val{font-family:'Newsreader',serif;font-size:26px;font-weight:600;line-height:1.1;font-variant-numeric:tabular-nums;}
+.cum-val.pos{color:var(--ok);} .cum-val.neg{color:var(--bad);}
+.cum-range{font-size:11px;opacity:.6;margin-top:1px;}
+.cum-side{display:flex;gap:18px;}
+.cum-side div{display:flex;flex-direction:column;align-items:flex-end;}
+.cum-side span{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;opacity:.7;}
+.cum-side b{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;}
+@media(max-width:480px){.cum-val{font-size:22px;}.cum-side{gap:12px;}.cum-side b{font-size:12.5px;}}
+
 html,body{margin:0;padding:0;}
-body{background:var(--bg);color:var(--ink);font-family:'Inter',system-ui,sans-serif;min-height:100vh;padding:24px 16px 90px;-webkit-font-smoothing:antialiased;}
+body{background:var(--bg);color:var(--ink);font-family:'Inter',system-ui,sans-serif;min-height:100vh;padding:24px 16px 120px;-webkit-font-smoothing:antialiased;}
 .wrap{max-width:760px;margin:0 auto;}
 button{font-family:inherit;}
 
@@ -316,6 +329,20 @@ h2 .count{display:inline-block;margin-inline-start:6px;padding:1px 8px;border-ra
 
 <div id="report"></div>
 
+<div class="cum-bar" id="cumBar" aria-live="polite">
+  <div class="cum-in">
+    <div class="cum-main">
+      <span class="cum-lbl">Cumulative balance</span>
+      <span class="cum-val" id="cumVal">0 EGP</span>
+      <span class="cum-range" id="cumRange"></span>
+    </div>
+    <div class="cum-side">
+      <div><span>Total in</span><b id="cumIn">0</b></div>
+      <div><span>Total out</span><b id="cumOut">0</b></div>
+    </div>
+  </div>
+</div>
+
 <script>
 (function(){
   const DEFAULT_CATS = {
@@ -420,6 +447,36 @@ h2 .count{display:inline-block;margin-inline-start:6px;padding:1px 8px;border-ra
       net: base.inc + income.value - base.exp,
       incomeVal: income.value, inherited: income.inherited, sourceMonth: income.sourceMonth
     };
+  }
+
+  function updateCumulative(){
+    const keys = [];
+    data.transactions.forEach(t=> keys.push(t.date.slice(0,7)));
+    Object.keys(data.monthlyIncome||{}).forEach(k=> keys.push(k));
+    const valEl = document.getElementById("cumVal");
+    if(!keys.length){
+      valEl.textContent = "0 "+CCY; valEl.className = "cum-val";
+      document.getElementById("cumIn").textContent = "0";
+      document.getElementById("cumOut").textContent = "0";
+      document.getElementById("cumRange").textContent = "No data yet";
+      return;
+    }
+    keys.sort();
+    const first = keys[0];
+    let m = first, inc = 0, exp = 0, guard = 0;
+    while(m <= viewingMonth && guard++ < 1200){
+      const mt = monthTotals(m);
+      inc += mt.inc; exp += mt.exp;
+      m = shiftMonth(m, 1);
+    }
+    const net = inc - exp;
+    valEl.textContent = (net>=0?"+":"-") + fmt(Math.abs(net)) + " " + CCY;
+    valEl.className = "cum-val " + (net>=0 ? "pos" : "neg");
+    document.getElementById("cumIn").textContent = fmt(inc);
+    document.getElementById("cumOut").textContent = fmt(exp);
+    document.getElementById("cumRange").textContent = first > viewingMonth
+      ? "Nothing recorded up to " + shortMonthLabel(viewingMonth)
+      : shortMonthLabel(first) + " → " + shortMonthLabel(viewingMonth);
   }
 
   function checkRollover(){
@@ -560,6 +617,7 @@ h2 .count{display:inline-block;margin-inline-start:6px;padding:1px 8px;border-ra
         });
       }
       renderArchive();
+      updateCumulative();
     };
 
     if(withTransition){
