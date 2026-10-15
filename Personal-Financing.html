@@ -224,6 +224,15 @@ h2 .count{display:inline-block;margin-inline-start:6px;padding:1px 8px;border-ra
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="17" rx="1"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
             Full year
           </button>
+          <button id="bkSave" title="Download a backup file of all your data">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12M7 10l5 5 5-5M4 20h16"/></svg>
+            Backup
+          </button>
+          <button id="bkLoad" title="Restore your data from a backup file">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 15V3M7 8l5-5 5 5M4 20h16"/></svg>
+            Restore
+          </button>
+          <input type="file" id="bkFile" accept=".json,application/json" style="display:none">
         </div>
       </div>
       <div class="ratio">
@@ -1340,6 +1349,40 @@ h2 .count{display:inline-block;margin-inline-start:6px;padding:1px 8px;border-ra
   document.getElementById("expExcel").onclick = ()=> exportExcel(viewingMonth);
   document.getElementById("expPdf").onclick = ()=> exportPdf(viewingMonth);
   document.getElementById("expYear").onclick = ()=> exportAnnualExcel(viewingMonth.split("-")[0]);
+
+  // ---- Backup / Restore (JSON file) ----
+  document.getElementById("bkSave").onclick = async ()=>{
+    const payload = { app:"personal-finance-ledger", version:1, exportedAt:new Date().toISOString(), data:data };
+    const blob = new Blob([JSON.stringify(payload,null,2)], {type:"application/json"});
+    await saveFile("finance-backup-"+todayISO()+".json", blob);
+  };
+  document.getElementById("bkLoad").onclick = ()=> document.getElementById("bkFile").click();
+  document.getElementById("bkFile").onchange = async (ev)=>{
+    const input = ev.target;
+    const file = input.files && input.files[0];
+    input.value = "";
+    if(!file) return;
+    try{
+      const parsed = JSON.parse(await file.text());
+      const d = (parsed && parsed.data) ? parsed.data : parsed;
+      if(!d || !Array.isArray(d.transactions)) throw new Error("Not a valid backup file");
+      if(!d.archivedMonths) d.archivedMonths = {};
+      if(!d.monthlyIncome) d.monthlyIncome = {};
+      if(!d.customCategories) d.customCategories = {};
+      if(!d.customCategories.expense) d.customCategories.expense = [];
+      if(!d.customCategories.income) d.customCategories.income = [];
+      if(!d.lastSeenMonth) d.lastSeenMonth = monthKey(new Date());
+      if(!confirm("Restore this backup?\n\n"+d.transactions.length+" transactions will be loaded and will REPLACE the data currently in this browser.")) return;
+      data = d;
+      await saveData();
+      populateCategorySelect();
+      checkRollover();
+      render(false);
+      alert("Backup restored successfully.");
+    }catch(e){
+      alert("Could not restore: "+(e && e.message ? e.message : "invalid file"));
+    }
+  };
 
   (async function init(){
     data = await loadData();
