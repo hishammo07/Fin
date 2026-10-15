@@ -260,7 +260,7 @@ h2 .count{display:inline-block;margin-inline-start:6px;padding:1px 8px;border-ra
     </div>
 
     <div class="income-strip">
-      <label for="monthlyIncomeInput">Monthly income (fixed)</label>
+      <label for="monthlyIncomeInput">Salary</label>
       <input type="number" id="monthlyIncomeInput" min="0" step="0.01" placeholder="e.g. 20000">
       <span class="ccy-tag">EGP</span>
       <span class="hint" id="incomeHint"></span>
@@ -350,8 +350,8 @@ h2 .count{display:inline-block;margin-inline-start:6px;padding:1px 8px;border-ra
     income:["Salary","Freelance / side income","Gameya (savings circle)"]
   };
   const NEW_CAT = "__new__";
-  const ICONS = {"Fuel":"⛽","Transport":"🚌","Food & drinks":"🍽️","Bills":"🧾","Rent":"🏠","Shopping":"🛍️","Health":"💊","Education":"📚","Entertainment":"🎬","Gifts":"🎁","Gameya (savings circle)":"🤝","Salary":"💼","Freelance / side income":"💻","Monthly income":"💼","Other":"📦"};
-  const COLORS = {"Fuel":"#B4802A","Transport":"#2F6F8F","Food & drinks":"#C2603A","Bills":"#6B5B95","Rent":"#7A4E3A","Shopping":"#B04A7A","Health":"#3E8E7E","Education":"#4A6FB0","Entertainment":"#8E5FB5","Gifts":"#D0708A","Gameya (savings circle)":"#5C7F3A","Salary":"#1F6F54","Freelance / side income":"#2E8B6F","Monthly income":"#1F6F54","Other":"#7D7767"};
+  const ICONS = {"Fuel":"⛽","Transport":"🚌","Food & drinks":"🍽️","Bills":"🧾","Rent":"🏠","Shopping":"🛍️","Health":"💊","Education":"📚","Entertainment":"🎬","Gifts":"🎁","Gameya (savings circle)":"🤝","Salary":"💼","Freelance / side income":"💻","Other":"📦"};
+  const COLORS = {"Fuel":"#B4802A","Transport":"#2F6F8F","Food & drinks":"#C2603A","Bills":"#6B5B95","Rent":"#7A4E3A","Shopping":"#B04A7A","Health":"#3E8E7E","Education":"#4A6FB0","Entertainment":"#8E5FB5","Gifts":"#D0708A","Gameya (savings circle)":"#5C7F3A","Salary":"#1F6F54","Freelance / side income":"#2E8B6F","Other":"#7D7767"};
   const EXTRA_COLORS = ["#3F7CAC","#A0522D","#6A994E","#9C6644","#5F6CAF","#BC4B51","#2A9D8F","#8E6BBF"];
   function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
   function iconFor(c){ return ICONS[c] || "🏷️"; }
@@ -425,13 +425,6 @@ h2 .count{display:inline-block;margin-inline-start:6px;padding:1px 8px;border-ra
   function effectiveMonthlyIncome(mk){
     if(data.monthlyIncome && data.monthlyIncome[mk] != null){
       return { value: data.monthlyIncome[mk], inherited:false, sourceMonth: mk };
-    }
-    let m = mk;
-    for(let i=0;i<36;i++){
-      m = shiftMonth(m,-1);
-      if(data.monthlyIncome && data.monthlyIncome[m] != null){
-        return { value: data.monthlyIncome[m], inherited:true, sourceMonth: m };
-      }
     }
     return { value:0, inherited:false, sourceMonth:null };
   }
@@ -587,7 +580,11 @@ h2 .count{display:inline-block;margin-inline-start:6px;padding:1px 8px;border-ra
       document.getElementById("txnCount").textContent = list.length;
 
       const incomeEntries = byCategory(list,"income");
-      if(mt.incomeVal > 0) incomeEntries.unshift(["Monthly income", mt.incomeVal]);
+      if(mt.incomeVal > 0){
+        const si = incomeEntries.findIndex(e=>e[0]==="Salary");
+        if(si >= 0){ incomeEntries[si][1] += mt.incomeVal; incomeEntries.sort((a,b)=>b[1]-a[1]); }
+        else incomeEntries.unshift(["Salary", mt.incomeVal]);
+      }
 
       renderCatBlock("expenseCats", byCategory(list,"expense"), "expense");
       renderCatBlock("incomeCats", incomeEntries, "income");
@@ -1025,7 +1022,7 @@ h2 .count{display:inline-block;margin-inline-start:6px;padding:1px 8px;border-ra
     const mt = monthTotals(mk);
     const list = mt.list.slice();
     if(mt.incomeVal > 0){
-      list.push({date: mk+"-01", type:"income", category:"Monthly income", amount: mt.incomeVal,
+      list.push({date: mk+"-01", type:"income", category:"Salary", amount: mt.incomeVal,
         note: mt.inherited ? `carried from ${monthLabelText(mt.sourceMonth)}` : ""});
     }
     list.sort((a,b)=> a.date.localeCompare(b.date));
@@ -1151,7 +1148,7 @@ h2 .count{display:inline-block;margin-inline-start:6px;padding:1px 8px;border-ra
     const mt = monthTotals(mk);
     const list = mt.list.slice();
     if(mt.incomeVal > 0){
-      list.push({date: mk+"-01", type:"income", category:"Monthly income", amount: mt.incomeVal,
+      list.push({date: mk+"-01", type:"income", category:"Salary", amount: mt.incomeVal,
         note: mt.inherited ? `carried from ${monthLabelText(mt.sourceMonth)}` : ""});
     }
     list.sort((a,b)=> a.date.localeCompare(b.date));
@@ -1249,7 +1246,7 @@ h2 .count{display:inline-block;margin-inline-start:6px;padding:1px 8px;border-ra
       const mt = monthTotals(mk);
       const list = mt.list.slice();
       if(mt.incomeVal > 0){
-        list.push({date: mk+"-01", type:"income", category:"Monthly income", amount: mt.incomeVal,
+        list.push({date: mk+"-01", type:"income", category:"Salary", amount: mt.incomeVal,
           note: mt.inherited ? `carried from ${monthLabelText(mt.sourceMonth)}` : ""});
       }
       list.sort((a,b)=> a.date.localeCompare(b.date));
